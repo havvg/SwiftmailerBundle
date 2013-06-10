@@ -12,6 +12,7 @@
 namespace Symfony\Bundle\SwiftmailerBundle\Command;
 
 use Symfony\Bundle\FrameworkBundle\Command\ContainerAwareCommand;
+use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -32,6 +33,8 @@ class SendEmailCommand extends ContainerAwareCommand
         $this
             ->setName('swiftmailer:spool:send')
             ->setDescription('Sends emails from the spool')
+            ->addArgument('mailer', InputArgument::OPTIONAL, 'The service of the mailer to use.', 'mailer')
+            ->addArgument('transport', InputArgument::OPTIONAL, 'The service of the transport to use to send the messages.', 'swiftmailer.transport.real')
             ->addOption('message-limit', 0, InputOption::VALUE_OPTIONAL, 'The maximum number of messages to send.')
             ->addOption('time-limit', 0, InputOption::VALUE_OPTIONAL, 'The time limit for sending messages (in seconds).')
             ->addOption('recover-timeout', 0, InputOption::VALUE_OPTIONAL, 'The timeout for recovering messages that have taken too long to send (in seconds).')
@@ -50,9 +53,20 @@ EOF
      */
     protected function execute(InputInterface $input, OutputInterface $output)
     {
-        $mailer     = $this->getContainer()->get('mailer');
+        $mailer     = $this->getContainer()->get($input->getArgument('mailer'));
         $transport  = $mailer->getTransport();
 
+        if ($transport instanceof \Swift_Transport_LoadBalancedTransport) {
+            foreach ($transport->getTransports() as $eachTransport) {
+                $this->recoverSpool($eachTransport, $input, $output);
+            }
+        }
+
+        $this->recoverSpool($transport, $input, $output);
+    }
+
+    protected function recoverSpool(\Swift_Transport $transport, InputInterface $input, OutputInterface $output)
+    {
         if ($transport instanceof \Swift_Transport_SpoolTransport) {
             $spool = $transport->getSpool();
             if ($spool instanceof \Swift_ConfigurableSpool) {
@@ -66,7 +80,7 @@ EOF
                     $spool->recover();
                 }
             }
-            $sent = $spool->flushQueue($this->getContainer()->get('swiftmailer.transport.real'));
+            $sent = $spool->flushQueue($this->getContainer()->get($input->getArgument('transport')));
 
             $output->writeln(sprintf('sent %s emails', $sent));
         }
